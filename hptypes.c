@@ -171,13 +171,32 @@ int string_to_object(unsigned char *buffer, size_t buffer_size,
 	return 0;
 }
 
-void show_object(struct quartet *q, int q_size, int show_debug)
+int show_name(struct quartet **p)
+{
+	int value, i;
+	int name_length;
+
+	name_length = read_int(p, 2);
+	printf("Name: '");
+	for (i = 0; i < name_length; i++)
+		printf("%c", read_char(p));
+	printf("'\n");
+	value = read_int(p, 2);
+	if (value != name_length) {
+		printf("Invalid name size: %d vs %d\n",
+		       name_length, value);
+		return -1;
+	}
+
+	return 0;
+}
+
+struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 {
 	int type;
 	int length;
 	int i;
 	int e, m, s;
-	int name_length;
 	int lib_number;
 	struct quartet *p;
 	unsigned char *buffer;
@@ -190,7 +209,7 @@ void show_object(struct quartet *q, int q_size, int show_debug)
 
 	if (q_size < 5) {
 		printf("size to low for an object (%d)\n", q_size);
-		return;
+		return NULL;
 	}
 
 	if (show_debug == 2) {
@@ -258,17 +277,8 @@ void show_object(struct quartet *q, int q_size, int show_debug)
 		}
 		printf("library (0x%x) length %d\n", type, length);
 
-		name_length = read_int(&p, 2);
-		printf("Name: '");
-		for (i = 0; i < name_length; i++)
-			printf("%c", read_char(&p));
-		printf("'\n");
-		value = read_int(&p, 2);
-		if (value != name_length) {
-			printf("Invalid name size: %d vs %d\n",
-			       name_length, value);
+		if (show_name(&p) < 0)
 			break;
-		}
 		lib_number = read_int(&p, 3);
 		printf("Library nb: %d\n", lib_number);
 
@@ -295,10 +305,50 @@ void show_object(struct quartet *q, int q_size, int show_debug)
 		printf("Code (0x%x) length %d\n", type, length);
 		asm_decode(p, length, show_debug);
 		break;
+	case 0x2A96:
+		unsigned int attached_libs;
+		struct quartet *current_object;
+		struct quartet *last_object;
+		int length;
+		int object_length;
+		attached_libs = read_int(&p, 3);
+		printf("Directory, attached libs %x\n", attached_libs);
+		if (attached_libs != 0x800 - 1)
+			for (i = 0; i < attached_libs; i++) {
+				/* TODO attached libs */
+				read_int(&p, 3);
+				read_int(&p, 5);
+				read_int(&p, 5);
+			}
+		/* index of last element */
+		last_object = p;
+		last_object += read_int(&p, 5);
+		if (read_int(&p, 5) != 0) {
+			printf("missing 00000 info in dir header\n");
+			break;
+		}
+		while (p != NULL && p <= last_object) {
+			current_object = p;
+			printf("DIR ENTRY ==>\n");
+			if (show_name(&p) < 0)
+				break;
+			p = show_object(p, q_size, show_debug);
+			object_length = p - current_object;
+			length = read_int(&p, 5);
+			if (object_length != length) {
+				printf("bad object length: %x instead of %x\n",
+				       object_length, length);
+				break;
+			}
+			printf("<= DIR ENTRY length %d\n", object_length);
+		}
+		break;
 	default:
 		printf("unhandled type  0x%x\n", type);
 		break;
 	}
 
 	free(buffer);
+
+	return p;
 }

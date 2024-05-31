@@ -31,7 +31,7 @@ char read_char(struct quartet **q);
 int qposition(struct quartet *qref, struct quartet *q);
 long write_int(struct quartet **q, long value, int nb);
 
-void show_object(struct quartet *q, int q_size, int show_debug);
+struct quartet *show_object(struct quartet *q, int q_size, int show_debug);
 char qvalue(struct quartet *q, int i);
 int string_to_object(unsigned char *buffer, size_t buffer_size,
 		     struct quartet **q, int *q_size);
