@@ -1,9 +1,16 @@
 /*
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 3 of the License, or
+  (at your option) any later version.
 
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
 
-You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>. 
+  You should have received a copy of the GNU General Public License
+  along with this program. If not, see <https://www.gnu.org/licenses/>. 
 */
 
 #include <stdio.h>
@@ -18,6 +25,10 @@ struct quartet {
 };
 
 #define BUFFER_SIZE (500 * 1024)
+#define BLUE "\e[1;34m"
+#define GREEN "\e[1;32m"
+#define RED "\e[1;31m"
+#define NC "\e[m" /* No Color */
 
 struct quartet *alloc_q(int q_size)
 {
@@ -171,16 +182,19 @@ int string_to_object(unsigned char *buffer, size_t buffer_size,
 	return 0;
 }
 
-int show_name(struct quartet **p)
+#define MAX_NAME_LENGTH 128
+
+int read_name(struct quartet **p, char *name)
 {
 	int value, i;
 	int name_length;
 
 	name_length = read_int(p, 2);
-	printf("Name: '");
+	if (name_length + 1 > MAX_NAME_LENGTH)
+		return -1;
+
 	for (i = 0; i < name_length; i++)
-		printf("%c", read_char(p));
-	printf("'\n");
+		name[i] = read_char(p);
 	value = read_int(p, 2);
 	if (value != name_length) {
 		printf("Invalid name size: %d vs %d\n",
@@ -191,13 +205,31 @@ int show_name(struct quartet **p)
 	return 0;
 }
 
+int read_short_name(struct quartet **p, char *name)
+{
+	int value, i;
+	int name_length;
+
+	name_length = read_int(p, 2);
+	if (name_length + 1 > MAX_NAME_LENGTH)
+		return -1;
+
+	for (i = 0; i < name_length; i++)
+		name[i] = read_char(p);
+
+	return 0;
+}
+
 struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 {
 	int type;
 	int length;
-	int i;
+	int lines, columns;
+	int i, j;
 	int e, m, s;
+	int ec, mc, sc;
 	int lib_number;
+	int command;
 	struct quartet *p;
 	unsigned char *buffer;
 	/* variables for lib */
@@ -205,7 +237,9 @@ struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 	struct quartet *message_array_ptr;
 	struct quartet *link_table_ptr;
 	struct quartet *config_object_ptr;
-	int value;
+	unsigned int value;
+	unsigned char c;
+	char name[MAX_NAME_LENGTH];
 
 	if (q_size < 5) {
 		printf("size to low for an object (%d)\n", q_size);
@@ -223,19 +257,30 @@ struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 				printf(" ");
 		}
 		printf("B2130\n"); /* epilogue */
-		return;
+		return NULL;
 	}
 
 	/* 500KB enougth for any Saturn asm code */
 	buffer = calloc(1, BUFFER_SIZE);
 	if (buffer == NULL) {
 		printf("Memory allocation error\n");
-		return;
+		return NULL;
 	}
 
 	p = q;
 	type = read_int(&p, 5);
 	switch(type) {
+	case 0x2911:
+		value = read_int(&p, 5);
+		printf("System binary <%05x>\n", value);
+		break;
+	case 0x2B88:
+		length = read_int(&p, 5);
+		printf("Library data length %d\n", length);
+		for (i = 5; i < length; i++)
+			printf("%02X ", (int)read_int(&p, 1));
+		printf("\n");
+		break;
 	case 0x2A2C:
 		length = read_int(&p, 5);
 		if (length == 0) {
@@ -251,16 +296,35 @@ struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 		/* read as bytes */
 		length /= 2;
 		printf("String (0x%x) length %d '", type, length);
+		printf(GREEN);
 		for (i = 0; i < length; i++)
 			printf("%c", read_char(&p));
+		printf(NC);
 		printf("'\n");
+		break;
+	case 0x2A4E:
+		length = read_int(&p, 5);
+		length -= 5;
+		printf("Int (length %d) : ", length);
+		for (i = 0; i < length; i++)
+			printf("%X", (int)read_int(&p, 1));
+		printf("\n");
+		break;
+	case 0x2977:
+		e = read_int(&p, 3);
+		m = read_int(&p, 12);
+		s = read_int(&p, 1);
+		ec = read_int(&p, 3);
+		mc = read_int(&p, 12);
+		sc = read_int(&p, 1);
+		printf("complex (0x%x) e %d m %d s %d ; cpl e %d m %d s %d\n",
+		       type, e, m, s, ec, mc, sc);
 		break;
 	case 0x2933:
 		e = read_int(&p, 3);
 		m = read_int(&p, 12);
 		s = read_int(&p, 1);
 		printf("real (0x%x) e %d m %d s %d\n", type, e, m, s);
-		break;
 		break;
 	case 0x2955:
 		e = read_int(&p, 5);
@@ -277,8 +341,9 @@ struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 		}
 		printf("library (0x%x) length %d\n", type, length);
 
-		if (show_name(&p) < 0)
+		if (read_name(&p, name) < 0)
 			break;
+		printf("%s%s%s\n", RED, name, NC);
 		lib_number = read_int(&p, 3);
 		printf("Library nb: %d\n", lib_number);
 
@@ -293,7 +358,11 @@ struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 			break;
 		}
 
-		printf("todo ...\n");
+		printf("todo ... ptrs hash %p msg %p link %p cfg %p\n",
+		       hash_ptr,
+		       message_array_ptr,
+		       link_table_ptr,
+		       config_object_ptr);
 		break;
 	case 0x2DCC:
 		length = read_int(&p, 5) - 5;
@@ -304,6 +373,53 @@ struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 		}
 		printf("Code (0x%x) length %d\n", type, length);
 		asm_decode(p, length, show_debug);
+		break;
+	case 0x2AB8:
+		printf("Algebric:\n");
+		while ((value = read_int_no_incr(&p, 5)) != 0x312B) {
+			if ((value & 0xFF000) == 0x02000) {
+				p = show_object(p, q_size, show_debug);
+			} else {
+				printf("<%05X>\n", (int)read_int(&p, 5));
+			}
+		}
+		printf("\nAlgebric terminated\n");
+		read_int(&p, 5);
+		break;
+	case 0x2A74:
+		printf("List:\n");
+		while (read_int_no_incr(&p, 5) != 0x312B)
+			p = show_object(p, q_size, show_debug);
+		printf("List terminated\n");
+		read_int(&p, 5);
+		break;
+	case 0x2AFC:
+		if (read_short_name(&p, name) < 0)
+			break;
+		printf("Tagged object: %s%s%s\n", RED, name, NC);
+		p = show_object(p, q_size, show_debug);
+		break;
+	case 0x2D9D:
+		printf("Program:\n");
+		while ((value = read_int_no_incr(&p, 5)) != 0x312B) {
+			if ((value & 0xFF000) == 0x02000) {
+				p = show_object(p, q_size, show_debug);
+			} else {
+				printf("instr %05X\n", (int)read_int(&p, 5));
+			}
+		}
+		printf("Program terminated\n");
+		read_int(&p, 5);
+		break;
+	case 0x2E48:
+		if (read_short_name(&p, name) < 0)
+			break;
+		printf("Global name: %s%s%s\n", RED, name, NC);
+		break;
+	case 0x2E6D:
+		if (read_short_name(&p, name) < 0)
+			break;
+		printf("Local name: %s%s%s\n", RED, name, NC);
 		break;
 	case 0x2A96:
 		unsigned int attached_libs;
@@ -327,28 +443,66 @@ struct quartet *show_object(struct quartet *q, int q_size, int show_debug)
 			printf("missing 00000 info in dir header\n");
 			break;
 		}
-		while (p != NULL && p <= last_object) {
+		while (p != NULL) {
 			current_object = p;
-			printf("DIR ENTRY ==>\n");
-			if (show_name(&p) < 0)
+			if (read_name(&p, name) < 0)
 				break;
+			printf("DIR ENTRY %s%s%s ==>\n", RED, name, NC);
 			p = show_object(p, q_size, show_debug);
+			if (p == NULL) {
+				printf("abort dir extraction\n");
+				goto failure;
+			}
+			if (current_object == last_object) {
+				printf("End of directory\n");
+				break;
+			}
 			object_length = p - current_object;
 			length = read_int(&p, 5);
 			if (object_length != length) {
-				printf("bad object length: %x instead of %x\n",
+				printf("bad DIR length: %x instead of %x\n",
 				       object_length, length);
 				break;
 			}
 			printf("<= DIR ENTRY length %d\n", object_length);
 		}
 		break;
+	case 0x2E92:
+		lib_number = read_int(&p, 3);
+		command = read_int(&p, 3);
+		printf("XLib name lib %X command %x\n", lib_number, command);
+		break;
+	case 0x2B1E:
+		length = read_int(&p, 5);
+		if (length == 0) {
+			printf("Empty graphic\n");
+			break;
+		}
+		lines = read_int(&p, 5);
+		columns = read_int(&p, 5);
+		printf("Graphic lines %d columns %d\n", lines, columns);
+		for (j = 0; j < lines; j++) {
+			for (i = 0; i < columns; i++) {
+				/* read new value only at 0, 8, etc */
+				if (i % 8 == 0)
+					c = read_char(&p);
+				if (c & (0x8 >> (i % 8)))
+					printf(" X");
+				else
+					printf(" .");
+			}
+			printf("\n");
+		};
+		break;
 	default:
-		printf("unhandled type  0x%x\n", type);
+		printf("unhandled type  0x%05x\n", type);
 		break;
 	}
 
 	free(buffer);
 
 	return p;
+ failure:
+	free(buffer);
+	return NULL;
 }
